@@ -114,7 +114,7 @@ sequenceDiagram
 
 ```bash
 # 1. Clone
-git clone https://github.com/<you>/epinet-visualizer.git
+git clone https://github.com/Midun523/epinet-visualizer.git
 cd epinet-visualizer
 
 # 2. Copy env

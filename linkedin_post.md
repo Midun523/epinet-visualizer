@@ -27,7 +27,7 @@ Here's what's under the hood:
 
 **Important transparency note:** the ML component uses simulated attention weights — not a trained model. This is intentional. The architecture is built to accept a real pharmacogenomic attention or graph-transformer model with a single function swap. Honesty in demo projects matters.
 
-🔗 **[REPO LINK]** | 📸 **[SCREENSHOT/GIF]**
+🔗 **https://github.com/Midun523/epinet-visualizer** | 📸 **[SCREENSHOT/GIF]**
 
 I'd love feedback from anyone working at the intersection of bioinformatics, AI drug discovery, and clinical informatics — this is the space I want to build in.
 
