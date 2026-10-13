@@ -8,12 +8,15 @@ info()  { echo -e "${GREEN}[setup]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[warn]${NC}  $*"; }
 error() { echo -e "${RED}[error]${NC} $*" >&2; exit 1; }
 
+ROOT_DIR="$(pwd)"
+
 # ── 1. Check prerequisites ─────────────────────────────────────────────────
 
 info "Checking prerequisites…"
 
 command -v java  >/dev/null 2>&1 || error "java not found. Install JDK 17+."
 command -v node  >/dev/null 2>&1 || error "node not found. Install Node 20+."
+
 # Python: check functional python or common locations
 if command -v python3 >/dev/null 2>&1 && python3 --version >/dev/null 2>&1; then
   PYTHON="python3"
@@ -33,11 +36,11 @@ JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}')
 NODE_VER=$(node --version)
 info "Java: $JAVA_VER | Node: $NODE_VER | Python: $($PYTHON --version)"
 
-# Maven: prefer system mvn, fall back to wrapper or tools directory
+# Maven: prefer system mvn, fall back to wrapper or tools directory (using absolute paths)
 if command -v mvn >/dev/null 2>&1; then
   MVN="mvn"
-elif [ -f "backend/mvnw" ]; then
-  MVN="./backend/mvnw"
+elif [ -f "$ROOT_DIR/backend/mvnw" ]; then
+  MVN="$ROOT_DIR/backend/mvnw"
 elif [ -f "/c/tools/apache-maven-3.9.9/bin/mvn.cmd" ]; then
   MVN="/c/tools/apache-maven-3.9.9/bin/mvn.cmd"
 elif [ -f "C:/tools/apache-maven-3.9.9/bin/mvn.cmd" ]; then
@@ -59,7 +62,7 @@ fi
 
 info "Installing frontend dependencies…"
 cd frontend
-npm install --legacy-peer-deps --silent
+npm install --silent
 cd ..
 info "Frontend deps installed."
 
@@ -95,6 +98,9 @@ else
 fi
 
 $VENV_PY -m pip install -r requirements.txt --quiet
+if [ -f "requirements-dev.txt" ]; then
+  $VENV_PY -m pip install -r requirements-dev.txt --quiet
+fi
 cd ..
 info "ML service venv ready."
 
@@ -118,5 +124,5 @@ echo -e "${GREEN}✓ Setup complete!${NC}"
 echo ""
 echo "  Start everything:  bash run.sh"
 echo "  Frontend only:     cd frontend && npm run dev"
-echo "  ML service only:   cd ml-service && ./venv/Scripts/uvicorn main:app --reload"
+echo "  ML service only:   cd ml-service && ([ -f ./venv/bin/uvicorn ] && ./venv/bin/uvicorn || ./venv/Scripts/uvicorn) main:app --reload"
 echo "  Backend (H2):      cd backend && mvn spring-boot:run -Dspring-boot.run.profiles=h2"

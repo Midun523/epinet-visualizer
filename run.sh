@@ -6,6 +6,7 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC
 info()  { echo -e "${GREEN}[run]${NC}  $*"; }
 warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
 
+ROOT_DIR="$(pwd)"
 PIDS=()
 cleanup() {
   echo ""
@@ -19,14 +20,14 @@ trap cleanup SIGINT SIGTERM
 
 # ── MySQL (Docker) ─────────────────────────────────────────────────────────
 if command -v docker >/dev/null 2>&1; then
-  info "Starting MySQL via docker-compose…"
-  docker compose up -d mysql
-  info "Waiting for MySQL to be ready…"
-  until docker compose exec -T mysql mysqladmin ping -h localhost --silent 2>/dev/null; do
-    sleep 2
-  done
-  info "MySQL ready."
-  USE_H2=false
+  info "Starting MySQL via docker-compose (waiting for healthcheck)…"
+  if docker compose up -d --wait mysql 2>/dev/null; then
+    info "MySQL container healthy and ready."
+    USE_H2=false
+  else
+    warn "Docker compose start failed — falling back to H2 in-memory profile."
+    USE_H2=true
+  fi
 else
   warn "Docker not available — backend will use H2 in-memory profile."
   USE_H2=true
@@ -34,17 +35,17 @@ fi
 
 # ── ML service ─────────────────────────────────────────────────────────────
 info "Starting ML microservice on :8000…"
-if [ -f "./venv/Scripts/uvicorn" ] || [ -f "./venv/Scripts/uvicorn.exe" ]; then
+cd ml-service
+if [ -f "./venv/Scripts/uvicorn.exe" ] || [ -f "./venv/Scripts/uvicorn" ]; then
   UVICORN_CMD="./venv/Scripts/uvicorn"
 elif [ -f "./venv/bin/uvicorn" ]; then
   UVICORN_CMD="./venv/bin/uvicorn"
-elif [[ "$OSTYPE" == *"msys"* || "$OSTYPE" == *"cygwin"* || "$OSTYPE" == *"win"* ]]; then
-  UVICORN_CMD="./venv/Scripts/uvicorn"
+elif command -v uvicorn >/dev/null 2>&1; then
+  UVICORN_CMD="uvicorn"
 else
-  UVICORN_CMD="./venv/bin/uvicorn"
+  UVICORN_CMD="python -m uvicorn"
 fi
 
-cd ml-service
 $UVICORN_CMD main:app --host 0.0.0.0 --port 8000 &
 PIDS+=($!)
 cd ..
@@ -54,6 +55,8 @@ sleep 2
 info "Starting Spring Boot backend on :8080…"
 if command -v mvn >/dev/null 2>&1; then
   MVN="mvn"
+elif [ -f "$ROOT_DIR/backend/mvnw" ]; then
+  MVN="$ROOT_DIR/backend/mvnw"
 elif [ -f "/c/tools/apache-maven-3.9.9/bin/mvn.cmd" ]; then
   MVN="/c/tools/apache-maven-3.9.9/bin/mvn.cmd"
 elif [ -f "C:/tools/apache-maven-3.9.9/bin/mvn.cmd" ]; then

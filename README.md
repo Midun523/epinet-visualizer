@@ -83,18 +83,18 @@ sequenceDiagram
 
 | Layer | Technology | Version |
 |---|---|---|
-| Frontend | React + Vite | 18.x / 5.x |
-| Styling | Tailwind CSS | 3.x |
-| Network graph | react-force-graph-2d | 1.25.x |
-| Charts | Recharts | 2.x |
-| Backend | Spring Boot | 3.3.x |
-| Backend language | Java | 21 (Temurin) |
-| ORM | Spring Data JPA / Hibernate | 6.x |
-| Database | MySQL | 8.0 |
-| ML service | FastAPI + Uvicorn | 0.115.x / 0.30.x |
-| ML language | Python | 3.12 |
-| Data science | Pandas + NumPy + scikit-learn | latest stable |
-| Containerisation | Docker Compose | 3.8 |
+| Frontend | React + Vite | 18.3.1 / 5.4.11 |
+| Styling | Tailwind CSS | 3.4.17 |
+| Network graph | react-force-graph-2d | 1.25.5 |
+| Charts | Recharts | 2.13.0 |
+| Backend | Spring Boot | 3.3.4 |
+| Backend language | Java | 17+ (bytecode target 17, tested on 21) |
+| ORM | Spring Data JPA / Hibernate | 6.5.3 |
+| Database | MySQL / H2 | 8.0 (MySQL) / 2.2.224 (H2 in-memory) |
+| ML service | FastAPI + Uvicorn | 0.115.0 / 0.30.6 |
+| ML language | Python | 3.11+ (tested on 3.12.2) |
+| Data science | Pandas + NumPy + scikit-learn | 2.2.3 / 1.26.4 / 1.5.2 (pinned in requirements.txt) |
+| Containerisation | Docker Compose | Compose v2 |
 
 ---
 
@@ -188,18 +188,29 @@ python sample-data/generate_sample.py
 
 ---
 
-## ML Simulation Logic
+## ML Simulation Logic & Statistical Epistasis
 
-The `_simulate_attention_matrix()` function in [`ml-service/main.py`](ml-service/main.py) stands in for a trained model:
+The `_simulate_attention_matrix()` function in [`ml-service/main.py`](ml-service/main.py) implements a statistical epistasis regression pipeline:
 
-1. Computes absolute **pairwise Pearson correlations** between gene columns (60% weight)
-2. Computes each gene's **correlation with phenotype** and forms an outer product (25% weight)
-3. Adds **seeded random noise** (15% weight), seed from SHA-256 of file content
-4. Applies **row-wise softmax** normalization
-5. **Symmetrizes** the matrix and zeros the diagonal
-6. **Min-max scales** to `[0, 1]`
+1. **Pairwise Epistasis Regression**:
+   For each gene pair $(g_i, g_j)$, it compares an additive model against a full non-additive interaction model:
+   $$\text{Base Model: } y = \beta_0 + \beta_1 g_i + \beta_2 g_j$$
+   $$\text{Interaction Model: } y = \beta_0 + \beta_1 g_i + \beta_2 g_j + \beta_{\text{int}} (g_i \cdot g_j)$$
+2. **Variance Contribution ($\Delta R^2$)**:
+   Quantifies the incremental variance uniquely explained by the interaction term:
+   $$\Delta R^2 = \max\left(0, \frac{\text{RSS}_{\text{base}} - \text{RSS}_{\text{full}}}{\text{TSS}}\right)$$
+3. **Pseudo-Attention Smoothing**:
+   Blends 85% statistical interaction term with 15% reproducible seeded noise (SHA-256 of file content).
+4. **Symmetry & Scaling**:
+   Symmetrizes the interaction matrix, zeroes the diagonal, and min-max scales to $[0, 1]$.
 
-To replace with a real model: implement `_simulate_attention_matrix()` with a forward pass through your trained attention/graph-transformer model.
+**Biological Validation on Planted Interactions**:
+The sample generator [`sample-data/generate_sample.py`](sample-data/generate_sample.py) plants known non-additive epistatic interactions:
+- `CYP2C9 * VKORC1` (classic warfarin dosing synergy)
+- `CYP2D6 * CYP3A4` (dual hepatic clearance synergy)
+- `SLCO1B1 * ABCB1` (transporter-transporter disposition synergy)
+
+Running the analysis on the sample dataset demonstrates that EpiNet Visualizer accurately recovers these planted epistatic interactions at the top of the ranked pairs list!
 
 ---
 
