@@ -5,7 +5,7 @@ import com.epinet.dto.StatusResponse;
 import com.epinet.model.AnalysisRun;
 import com.epinet.repository.AnalysisRunRepository;
 import com.epinet.service.AnalysisService;
-import com.epinet.service.CsvValidationService;
+import com.epinet.service.CsvValidator;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
@@ -29,11 +29,16 @@ public class AnalysisController {
 
     private final AnalysisRunRepository repo;
     private final AnalysisService analysisService;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
 
-    public AnalysisController(AnalysisRunRepository repo, AnalysisService analysisService) {
+    public AnalysisController(
+            AnalysisRunRepository repo,
+            AnalysisService analysisService,
+            ObjectMapper mapper
+    ) {
         this.repo = repo;
         this.analysisService = analysisService;
+        this.mapper = mapper;
     }
 
     // ── POST /api/uploads ─────────────────────────────────────────────────────
@@ -41,14 +46,14 @@ public class AnalysisController {
     @PostMapping("/uploads")
     public ResponseEntity<?> upload(@RequestParam("file") MultipartFile file) throws IOException {
 
-        // Validate CSV structure; throws ValidationException on failure
-        byte[] bytes = CsvValidationService.validate(file);
+        // Validate CSV structure and encoding; throws ValidationException on failure
+        byte[] bytes = CsvValidator.validate(file);
 
         String analysisId = UUID.randomUUID().toString();
         AnalysisRun run = new AnalysisRun(analysisId, file.getOriginalFilename());
         repo.save(run);
 
-        // Fire-and-forget; response returns before processing completes
+        // Fire-and-forget; response returns before background processing completes
         analysisService.runAnalysis(analysisId, bytes, file.getOriginalFilename());
 
         return ResponseEntity.status(HttpStatus.ACCEPTED)
@@ -69,7 +74,7 @@ public class AnalysisController {
     // ── GET /api/analyses/{id}/result ─────────────────────────────────────────
 
     @GetMapping("/analyses/{id}/result")
-    public ResponseEntity<?> getResult(@PathVariable String id) throws Exception {
+    public ResponseEntity<?> getResult(@PathVariable String id) {
         return repo.findById(id)
                 .map(r -> {
                     if (r.getStatus() != AnalysisRun.Status.COMPLETED) {
@@ -77,7 +82,7 @@ public class AnalysisController {
                                 .<Object>body(Map.of("error", "Result not ready. Status: " + r.getStatus()));
                     }
                     try {
-                        // Return raw JSON object (not double-serialized)
+                        // Return parsed JSON object rather than double-encoded string
                         Map<String, Object> result = mapper.readValue(
                                 r.getResultJson(), new TypeReference<>() {});
                         return ResponseEntity.ok(result);

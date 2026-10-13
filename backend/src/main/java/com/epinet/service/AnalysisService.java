@@ -12,15 +12,17 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.time.LocalDateTime;
 
 /**
- * Async service that calls the Python ML microservice and persists results.
- * All DB writes are transactional; the async method runs in Spring's task executor.
+ * Background orchestrator service that invokes the Python ML microservice and persists results.
+ * Runs in the custom 'analysisExecutor' thread pool.
+ * Note: @Transactional is intentionally omitted from runAnalysis() so DB connections
+ * are not held open during long external HTTP calls.
  */
 @Service
 public class AnalysisService {
@@ -29,13 +31,15 @@ public class AnalysisService {
 
     private final AnalysisRunRepository repo;
     private final WebClient webClient;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
 
     public AnalysisService(
             AnalysisRunRepository repo,
+            ObjectMapper mapper,
             @Value("${ml.service.url:http://localhost:8000}") String mlUrl
     ) {
         this.repo = repo;
+        this.mapper = mapper;
         this.webClient = WebClient.builder()
                 .baseUrl(mlUrl)
                 .codecs(config -> config.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
@@ -43,11 +47,10 @@ public class AnalysisService {
     }
 
     /**
-     * Runs asynchronously after the upload controller responds 202.
+     * Runs asynchronously on the 'analysisExecutor' pool after the upload controller responds 202.
      * Transitions status: PROCESSING → COMPLETED | FAILED.
      */
-    @Async
-    @Transactional
+    @Async("analysisExecutor")
     public void runAnalysis(String analysisId, byte[] fileBytes, String filename) {
         log.info("Starting async analysis for id={}", analysisId);
 
@@ -72,18 +75,40 @@ public class AnalysisService {
                     .bodyToMono(String.class)
                     .block();
 
-            // Validate that it is parseable JSON
+            // Validate that returned payload is parseable JSON
             mapper.readTree(resultJson);
 
             run.setResultJson(resultJson);
             run.setStatus(AnalysisRun.Status.COMPLETED);
             run.setCompletedAt(LocalDateTime.now());
-            log.info("Analysis {} COMPLETED", analysisId);
+            log.info("Analysis {} COMPLETED successfully", analysisId);
+
+        } catch (WebClientResponseException ex) {
+            String responseBody = ex.getResponseBodyAsString();
+            log.error("ML service rejected analysis {}: HTTP {} - {}", analysisId, ex.getStatusCode(), responseBody);
+
+            String detailMessage = "ML service error (" + ex.getStatusCode().value() + ")";
+            try {
+                JsonNode errNode = mapper.readTree(responseBody);
+                if (errNode.has("detail")) {
+                    detailMessage = errNode.get("detail").asText();
+                } else if (errNode.has("error")) {
+                    detailMessage = errNode.get("error").asText();
+                }
+            } catch (Exception ignored) {
+                if (responseBody != null && !responseBody.isBlank()) {
+                    detailMessage = responseBody;
+                }
+            }
+
+            run.setStatus(AnalysisRun.Status.FAILED);
+            run.setErrorMessage(detailMessage);
+            run.setCompletedAt(LocalDateTime.now());
 
         } catch (Exception ex) {
-            log.error("Analysis {} FAILED: {}", analysisId, ex.getMessage(), ex);
+            log.error("Analysis {} FAILED with unexpected exception: {}", analysisId, ex.getMessage(), ex);
             run.setStatus(AnalysisRun.Status.FAILED);
-            run.setErrorMessage(ex.getMessage());
+            run.setErrorMessage(ex.getMessage() != null ? ex.getMessage() : "Unknown analysis failure");
             run.setCompletedAt(LocalDateTime.now());
         }
 

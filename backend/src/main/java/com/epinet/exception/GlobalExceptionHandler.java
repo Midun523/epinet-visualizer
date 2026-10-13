@@ -1,6 +1,6 @@
 package com.epinet.exception;
 
-import com.epinet.service.CsvValidationService;
+import com.epinet.service.CsvValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -19,8 +19,8 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    @ExceptionHandler(CsvValidationService.ValidationException.class)
-    public ResponseEntity<Map<String, String>> handleValidation(CsvValidationService.ValidationException ex) {
+    @ExceptionHandler(CsvValidator.ValidationException.class)
+    public ResponseEntity<Map<String, String>> handleValidation(CsvValidator.ValidationException ex) {
         return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
     }
 

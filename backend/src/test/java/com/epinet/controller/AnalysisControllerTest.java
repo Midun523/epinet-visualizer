@@ -51,6 +51,24 @@ class AnalysisControllerTest {
                 .andExpect(jsonPath("$.status").value("PROCESSING"));
     }
 
+    @Test
+    void validUploadWithUtf8Bom_returns202() throws Exception {
+        // Excel UTF-8 BOM byte sequence: EF BB BF (\uFEFF)
+        byte[] bom = new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
+        byte[] csv = (VALID_CSV_HEADER + VALID_CSV_ROW).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] withBom = new byte[bom.length + csv.length];
+        System.arraycopy(bom, 0, withBom, 0, bom.length);
+        System.arraycopy(csv, 0, withBom, bom.length, csv.length);
+
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "sample_excel.csv", "text/csv", withBom);
+
+        mockMvc.perform(multipart("/api/uploads").file(file))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.analysisId").exists())
+                .andExpect(jsonPath("$.status").value("PROCESSING"));
+    }
+
     // ── Validation: wrong extension → 400 ────────────────────────────────────
 
     @Test
