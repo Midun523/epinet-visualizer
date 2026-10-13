@@ -1,17 +1,20 @@
 """
 EpiNet Visualizer - ML Microservice
 ------------------------------------
-This service simulates an attention-based epistasis (gene-gene interaction) detector.
-It applies a statistical epistasis regression pipeline:
-For each pair (gene_i, gene_j), it compares an additive model:
-    phenotype ~ 1 + gene_i + gene_j
-against a full non-additive interaction model:
-    phenotype ~ 1 + gene_i + gene_j + (gene_i * gene_j)
-scoring each pair by the delta R^2 (incremental variance explained by the interaction product term).
-Scores are smoothed with reproducible seeded noise, symmetrized, and scaled to [0, 1].
+This service performs classical pairwise interaction regression (epistasis detection)
+on pharmacogenomic data.
 
-Architecture note: Replace the `_simulate_attention_matrix()` function with a
-real trained attention/transformer model to convert this into a deep-learning production pipeline.
+Method:
+For every gene pair (gene_i, gene_j), it compares an additive baseline model:
+    phenotype ~ 1 + gene_i + gene_j
+against a non-additive interaction model:
+    phenotype ~ 1 + gene_i + gene_j + (gene_i * gene_j)
+scoring each pair by the delta R^2 (incremental variance explained by the product term).
+Scores are symmetrized, zeroed on the diagonal, and scaled to [0, 1].
+
+Architecture note:
+This classical regression on synthetic data is designed so a trained graph-attention
+or transformer model can be dropped in as future scope.
 """
 
 import hashlib
@@ -31,8 +34,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="EpiNet ML Microservice",
-    description="Statistical epistasis and attention-based interaction scorer (DEMO only).",
-    version="1.1.0",
+    description="Pairwise interaction regression epistasis scorer.",
+    version="1.2.0",
 )
 
 app.add_middleware(
@@ -50,22 +53,16 @@ EXPECTED_GENES = [
 TOP_PAIRS_COUNT = 15
 
 
-def _file_seed(content: bytes) -> int:
-    """Derive a reproducible integer seed from file content hash."""
-    return int(hashlib.sha256(content).hexdigest()[:8], 16)
-
-
-def _simulate_attention_matrix(gene_df: pd.DataFrame, phenotype: pd.Series, seed: int) -> np.ndarray:
+def _compute_interaction_matrix(gene_df: pd.DataFrame, phenotype: pd.Series) -> np.ndarray:
     """
     Computes pairwise epistasis interaction scores using pairwise linear regression with
-    an interaction product term (delta R^2), blended with a seeded pseudo-attention noise term.
+    an interaction product term (delta R^2).
 
     For each gene pair (i, j):
       Base additive model: y = b0 + b1*x_i + b2*x_j
       Full epistatic model: y = b0 + b1*x_i + b2*x_j + b3*(x_i * x_j)
       Score = delta R^2 = max(0, (RSS_base - RSS_full) / TSS)
     """
-    rng = np.random.default_rng(seed)
     n = len(EXPECTED_GENES)
     matrix = np.zeros((n, n), dtype=float)
 
@@ -77,7 +74,6 @@ def _simulate_attention_matrix(gene_df: pd.DataFrame, phenotype: pd.Series, seed
     lr_base = LinearRegression()
     lr_full = LinearRegression()
 
-    # Pre-extract gene values
     X_genes = {g: gene_df[g].values for g in EXPECTED_GENES}
 
     for i in range(n):
@@ -105,17 +101,12 @@ def _simulate_attention_matrix(gene_df: pd.DataFrame, phenotype: pd.Series, seed
             matrix[i, j] = delta_r2
             matrix[j, i] = delta_r2
 
-    # Blend 85% statistical interaction term with 15% reproducible pseudo-attention noise
-    noise = rng.uniform(0.0, 0.05, (n, n))
-    noise = (noise + noise.T) / 2.0
-    combined = 0.85 * matrix + 0.15 * noise
-
     # Symmetrize and zero diagonal
-    np.fill_diagonal(combined, 0.0)
+    np.fill_diagonal(matrix, 0.0)
 
     # Scale off-diagonal values to [0, 1]
     scaler = MinMaxScaler()
-    flat = combined.flatten().reshape(-1, 1)
+    flat = matrix.flatten().reshape(-1, 1)
     scaled = scaler.fit_transform(flat).reshape(n, n)
     np.fill_diagonal(scaled, 0.0)
 
@@ -159,7 +150,7 @@ def _validate_and_load(content: bytes) -> tuple[pd.DataFrame, pd.Series, int]:
     gene_df = gene_df.fillna(gene_df.mean())
     phenotype = phenotype.fillna(phenotype.mean())
 
-    # Variance validation: constant columns cause singular matrices and NaN correlations
+    # Variance validation: constant columns cause singular matrices
     zero_var_genes = [g for g in EXPECTED_GENES if float(gene_df[g].std(ddof=0)) == 0.0]
     if zero_var_genes:
         raise HTTPException(
@@ -185,7 +176,7 @@ async def health() -> dict[str, str]:
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
     """
-    Accept a pharmacogenomic CSV, run the epistasis regression pipeline,
+    Accept a pharmacogenomic CSV, run pairwise interaction regression,
     and return an epistasis interaction matrix plus top pair scores.
     """
     if not file.filename.endswith(".csv"):
@@ -195,11 +186,10 @@ async def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
     if len(content) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    seed = _file_seed(content)
     gene_df, phenotype, rows_processed = _validate_and_load(content)
 
-    logger.info("Analyzing %d rows, seed=%d", rows_processed, seed)
-    matrix = _simulate_attention_matrix(gene_df, phenotype, seed)
+    logger.info("Analyzing %d rows", rows_processed)
+    matrix = _compute_interaction_matrix(gene_df, phenotype)
 
     # Build top pairs list
     pairs: list[dict] = []
@@ -220,6 +210,6 @@ async def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
         "meta": {
             "rows_processed": rows_processed,
             "simulated": True,
-            "model": "mock-attention-v1",
+            "model": "interaction-regression-v1",
         },
     }

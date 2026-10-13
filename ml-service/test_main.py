@@ -57,7 +57,7 @@ def test_valid_csv_returns_correct_shape():
     assert all(len(row) == 10 for row in body["matrix"])
     assert len(body["top_pairs"]) == 15
     assert body["meta"]["simulated"] is True
-    assert body["meta"]["model"] == "mock-attention-v1"
+    assert body["meta"]["model"] == "interaction-regression-v1"
 
 
 def test_top_pairs_sorted_descending():
@@ -189,10 +189,10 @@ def test_recovers_planted_epistatic_pairs():
     top_pairs = r.json()["top_pairs"]
     pair_tuples = [(p["gene_a"], p["gene_b"]) for p in top_pairs[:5]]
 
-    # At least two of the planted pairs must be in the top 5
+    # All 3 planted pairs land in the top 5 (specifically ranks 1, 2, and 4)
     planted = [("CYP2C9", "VKORC1"), ("CYP2D6", "CYP3A4"), ("SLCO1B1", "ABCB1")]
     recovered = sum(
         1 for p in planted
         if (p[0], p[1]) in pair_tuples or (p[1], p[0]) in pair_tuples
     )
-    assert recovered >= 2, f"Expected at least 2 planted pairs in top 5, got {pair_tuples}"
+    assert recovered == 3, f"Expected all 3 planted pairs in top 5, got {pair_tuples}"
