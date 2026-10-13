@@ -6,26 +6,26 @@
 
 Because no single gene tells the whole story. Drug metabolism is a network phenomenon. The moment you start modeling gene-gene interactions (epistasis), the picture changes entirely.
 
-That's what drove me to build **EpiNet Visualizer** — a full-stack pharmacogenomics dashboard that takes a CSV of gene expression data, runs it through a simulated attention-based scoring pipeline, and returns an interactive gene network showing which pairs interact most strongly to influence drug response.
+That's what drove me to build **EpiNet Visualizer** — a full-stack pharmacogenomics dashboard that takes a CSV of gene expression data, scores every gene pair for non-additive interaction (the extra variance a product term explains in a regression), and returns an interactive gene network showing which pairs interact most strongly to influence drug response.
 
 Here's what's under the hood:
 
-**☕ Spring Boot (Java 21)**
-- Async REST API — upload returns immediately (202), frontend polls every 2 s
-- Spring Data JPA + MySQL 8 for run persistence
-- Global exception handler, file validation (type, size, required columns), CORS config
+**☕ Spring Boot (Java 17 / 21)**
+- Async REST API — upload returns immediately (202), frontend polls every 2 s with automatic timeout
+- Spring Data JPA + MySQL 8 for run persistence (with in-memory H2 fallback)
+- Global exception handler, file validation (type, size, UTF-8 BOM, required columns), CORS config
 
 **⚛️ React 18 + Vite + Tailwind CSS 3**
-- Force-directed gene interaction network (react-force-graph-2d) — edge thickness scales with score, threshold slider, click-to-highlight
+- Force-directed gene interaction network (react-force-graph-2d) with memoized D3 layout — edge thickness scales with score, threshold slider, click-to-highlight
 - Sortable, filterable biomarker pairs table + Recharts score bar chart
 - Full analysis history — reload any past result
 
 **🐍 Python + FastAPI (ML microservice)**
-- POST /analyze accepts the CSV and returns a symmetric 10×10 interaction matrix
-- Simulated attention weights: pairwise correlations + phenotype signal + seeded noise, softmax-normalized
-- 13 pytest tests covering shape, symmetry, determinism, and all error paths
+- POST /analyze fits additive vs. interaction regression models for all 45 gene pairs and scores each by ΔR²
+- Synthetic sample data with 3 planted interactions (CYP2C9×VKORC1, CYP2D6×CYP3A4, SLCO1B1×ABCB1) to test recovery
+- 17 pytest tests covering validation, symmetry, determinism and planted-pair recovery
 
-**Important transparency note:** the ML component uses simulated attention weights — not a trained model. This is intentional. The architecture is built to accept a real pharmacogenomic attention or graph-transformer model with a single function swap. Honesty in demo projects matters.
+**Transparency note:** this runs on synthetic data with a classical interaction regression, not a trained attention model. The scoring function is built to be swapped for a graph-attention or transformer model. Honesty in demo projects matters.
 
 🔗 **https://github.com/Midun523/epinet-visualizer** | 📸 **[SCREENSHOT/GIF]**
 
