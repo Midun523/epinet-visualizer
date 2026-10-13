@@ -1,11 +1,10 @@
 """
 Pytest tests for the EpiNet ML microservice.
-Tests: valid CSV, missing columns, matrix symmetry, /health endpoint.
+Tests: valid CSV, missing columns, variance checks, shape, symmetry, determinism, epistasis recovery.
 """
 
 import io
-import json
-
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
@@ -16,12 +15,14 @@ from main import EXPECTED_GENES, app
 client = TestClient(app)
 
 
-def _make_csv(genes=None, rows=20, include_sample_id=True, include_phenotype=True) -> bytes:
+def _make_csv(genes=None, rows=20, include_sample_id=True, include_phenotype=True, constant_col=None) -> bytes:
     """Helper to build a valid (or deliberately invalid) CSV."""
     if genes is None:
         genes = EXPECTED_GENES
     rng = np.random.default_rng(42)
     data = {g: rng.random(rows) for g in genes}
+    if constant_col and constant_col in data:
+        data[constant_col] = np.ones(rows)
     if include_sample_id:
         data["sample_id"] = [f"S{i:03d}" for i in range(rows)]
     if include_phenotype:
@@ -112,11 +113,10 @@ def test_same_file_gives_same_result():
 
 
 # ──────────────────────────────────────────────
-# Missing / invalid columns → 400
+# Missing / invalid columns & variance → 400
 # ──────────────────────────────────────────────
 
 def test_missing_gene_columns_returns_400():
-    # omit CYP2D6 and CYP2C19
     csv_bytes = _make_csv(genes=EXPECTED_GENES[2:])
     r = client.post("/analyze", files={"file": ("bad.csv", csv_bytes, "text/csv")})
     assert r.status_code == 400
@@ -145,3 +145,54 @@ def test_non_csv_file_returns_400():
 def test_empty_file_returns_400():
     r = client.post("/analyze", files={"file": ("empty.csv", b"", "text/csv")})
     assert r.status_code == 400
+
+
+def test_too_few_rows_returns_400():
+    csv_bytes = _make_csv(rows=2)
+    r = client.post("/analyze", files={"file": ("short.csv", csv_bytes, "text/csv")})
+    assert r.status_code == 400
+    assert "At least 3 rows are required" in r.json()["detail"]
+
+
+def test_zero_variance_gene_returns_400():
+    csv_bytes = _make_csv(constant_col="CYP2D6")
+    r = client.post("/analyze", files={"file": ("zero_var.csv", csv_bytes, "text/csv")})
+    assert r.status_code == 400
+    assert "Zero-variance" in r.json()["detail"]
+
+
+def test_zero_variance_phenotype_returns_400():
+    rng = np.random.default_rng(42)
+    data = {g: rng.random(10) for g in EXPECTED_GENES}
+    data["sample_id"] = [f"S{i:03d}" for i in range(10)]
+    data["phenotype"] = [1.0] * 10
+    buf = io.StringIO()
+    pd.DataFrame(data).to_csv(buf, index=False)
+    r = client.post("/analyze", files={"file": ("const_pheno.csv", buf.getvalue().encode(), "text/csv")})
+    assert r.status_code == 400
+    assert "phenotype column" in r.json()["detail"]
+
+
+# ──────────────────────────────────────────────
+# Biological recovery of planted epistasis
+# ──────────────────────────────────────────────
+
+def test_recovers_planted_epistatic_pairs():
+    """Verify that sample CSV with planted CYP2C9*VKORC1 and CYP2D6*CYP3A4 interactions ranks them in top pairs."""
+    sample_file = Path(__file__).resolve().parent.parent / "sample-data" / "sample_pharmacogenomics.csv"
+    if not sample_file.exists():
+        pytest.skip("sample_pharmacogenomics.csv not found")
+
+    content = sample_file.read_bytes()
+    r = client.post("/analyze", files={"file": ("sample.csv", content, "text/csv")})
+    assert r.status_code == 200
+    top_pairs = r.json()["top_pairs"]
+    pair_tuples = [(p["gene_a"], p["gene_b"]) for p in top_pairs[:5]]
+
+    # At least two of the planted pairs must be in the top 5
+    planted = [("CYP2C9", "VKORC1"), ("CYP2D6", "CYP3A4"), ("SLCO1B1", "ABCB1")]
+    recovered = sum(
+        1 for p in planted
+        if (p[0], p[1]) in pair_tuples or (p[1], p[0]) in pair_tuples
+    )
+    assert recovered >= 2, f"Expected at least 2 planted pairs in top 5, got {pair_tuples}"

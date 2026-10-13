@@ -2,11 +2,16 @@
 EpiNet Visualizer - ML Microservice
 ------------------------------------
 This service simulates an attention-based epistasis (gene-gene interaction) detector.
-It is a DEMO: no trained model is used. The interaction matrix is derived from
-pairwise correlations + seeded random noise, normalized to resemble attention weights.
+It applies a statistical epistasis regression pipeline:
+For each pair (gene_i, gene_j), it compares an additive model:
+    phenotype ~ 1 + gene_i + gene_j
+against a full non-additive interaction model:
+    phenotype ~ 1 + gene_i + gene_j + (gene_i * gene_j)
+scoring each pair by the delta R^2 (incremental variance explained by the interaction product term).
+Scores are smoothed with reproducible seeded noise, symmetrized, and scaled to [0, 1].
 
 Architecture note: Replace the `_simulate_attention_matrix()` function with a
-real trained attention/transformer model to convert this into a production pipeline.
+real trained attention/transformer model to convert this into a deep-learning production pipeline.
 """
 
 import hashlib
@@ -18,6 +23,7 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import MinMaxScaler
 
 logging.basicConfig(level=logging.INFO)
@@ -25,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="EpiNet ML Microservice",
-    description="Simulated attention-based gene-gene interaction scorer (DEMO only).",
-    version="1.0.0",
+    description="Statistical epistasis and attention-based interaction scorer (DEMO only).",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -51,46 +57,65 @@ def _file_seed(content: bytes) -> int:
 
 def _simulate_attention_matrix(gene_df: pd.DataFrame, phenotype: pd.Series, seed: int) -> np.ndarray:
     """
-    Stand-in for a trained attention model.
+    Computes pairwise epistasis interaction scores using pairwise linear regression with
+    an interaction product term (delta R^2), blended with a seeded pseudo-attention noise term.
 
-    Computes pseudo-attention weights by:
-    1. Calculating absolute pairwise Pearson correlations between gene columns.
-    2. Computing each gene's absolute correlation with the phenotype.
-    3. Combining them with seeded random noise (scaled down to 15%).
-    4. Applying row-wise softmax-style normalization to mimic attention weights.
-    5. Symmetrizing and zeroing the diagonal.
-    6. Min-max scaling to [0, 1].
-
-    In a real pipeline this function would run a forward pass through a trained
-    graph-attention or transformer model and return its learned attention matrix.
+    For each gene pair (i, j):
+      Base additive model: y = b0 + b1*x_i + b2*x_j
+      Full epistatic model: y = b0 + b1*x_i + b2*x_j + b3*(x_i * x_j)
+      Score = delta R^2 = max(0, (RSS_base - RSS_full) / TSS)
     """
     rng = np.random.default_rng(seed)
     n = len(EXPECTED_GENES)
+    matrix = np.zeros((n, n), dtype=float)
 
-    # Step 1: absolute pairwise correlations
-    corr = gene_df[EXPECTED_GENES].corr().abs().values  # shape (n, n)
+    y = phenotype.values
+    tss = float(np.sum((y - np.mean(y)) ** 2))
+    if tss == 0:
+        tss = 1e-9
 
-    # Step 2: phenotype correlations per gene
-    pheno_corr = np.array([
-        abs(gene_df[g].corr(phenotype)) for g in EXPECTED_GENES
-    ])
-    pheno_outer = np.outer(pheno_corr, pheno_corr)
+    lr_base = LinearRegression()
+    lr_full = LinearRegression()
 
-    # Step 3: combine with noise
-    noise = rng.random((n, n)) * 0.15
-    raw = 0.60 * corr + 0.25 * pheno_outer + noise
+    # Pre-extract gene values
+    X_genes = {g: gene_df[g].values for g in EXPECTED_GENES}
 
-    # Step 4: softmax-style row normalization
-    exp_raw = np.exp(raw - raw.max(axis=1, keepdims=True))
-    attention = exp_raw / exp_raw.sum(axis=1, keepdims=True)
+    for i in range(n):
+        gene_i = EXPECTED_GENES[i]
+        x_i = X_genes[gene_i]
+        for j in range(i + 1, n):
+            gene_j = EXPECTED_GENES[j]
+            x_j = X_genes[gene_j]
+            x_int = x_i * x_j
 
-    # Step 5: symmetrize and zero diagonal
-    attention = (attention + attention.T) / 2.0
-    np.fill_diagonal(attention, 0.0)
+            # Base model: [x_i, x_j]
+            X_base = np.column_stack([x_i, x_j])
+            lr_base.fit(X_base, y)
+            pred_base = lr_base.predict(X_base)
+            rss_base = float(np.sum((y - pred_base) ** 2))
 
-    # Step 6: scale to [0, 1]
-    flat = attention.flatten().reshape(-1, 1)
+            # Full model: [x_i, x_j, x_i * x_j]
+            X_full = np.column_stack([x_i, x_j, x_int])
+            lr_full.fit(X_full, y)
+            pred_full = lr_full.predict(X_full)
+            rss_full = float(np.sum((y - pred_full) ** 2))
+
+            # Partial variance explained by interaction term (delta R^2)
+            delta_r2 = max(0.0, (rss_base - rss_full) / tss)
+            matrix[i, j] = delta_r2
+            matrix[j, i] = delta_r2
+
+    # Blend 85% statistical interaction term with 15% reproducible pseudo-attention noise
+    noise = rng.uniform(0.0, 0.05, (n, n))
+    noise = (noise + noise.T) / 2.0
+    combined = 0.85 * matrix + 0.15 * noise
+
+    # Symmetrize and zero diagonal
+    np.fill_diagonal(combined, 0.0)
+
+    # Scale off-diagonal values to [0, 1]
     scaler = MinMaxScaler()
+    flat = combined.flatten().reshape(-1, 1)
     scaled = scaler.fit_transform(flat).reshape(n, n)
     np.fill_diagonal(scaled, 0.0)
 
@@ -98,24 +123,31 @@ def _simulate_attention_matrix(gene_df: pd.DataFrame, phenotype: pd.Series, seed
 
 
 def _validate_and_load(content: bytes) -> tuple[pd.DataFrame, pd.Series, int]:
-    """Parse CSV, validate columns, return (gene_df, phenotype, rows_processed)."""
+    """Parse CSV, validate columns and variance, return (gene_df, phenotype, rows_processed)."""
     try:
         df = pd.read_csv(io.BytesIO(content))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Cannot parse CSV: {exc}")
 
     df.columns = df.columns.str.strip()
-    missing_genes = [g for g in EXPECTED_GENES if g not in df.columns]
-    if missing_genes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing gene columns: {missing_genes}. "
-                   f"Expected: {EXPECTED_GENES}",
-        )
+
     if "sample_id" not in df.columns:
         raise HTTPException(status_code=400, detail="Missing required column: sample_id")
     if "phenotype" not in df.columns:
         raise HTTPException(status_code=400, detail="Missing required column: phenotype")
+
+    missing_genes = [g for g in EXPECTED_GENES if g not in df.columns]
+    if missing_genes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing gene columns: {missing_genes}. Expected: {EXPECTED_GENES}",
+        )
+
+    if len(df) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail=f"CSV has only {len(df)} row(s). At least 3 rows are required for interaction regression.",
+        )
 
     gene_df = df[EXPECTED_GENES].apply(pd.to_numeric, errors="coerce")
     phenotype = pd.to_numeric(df["phenotype"], errors="coerce")
@@ -123,8 +155,23 @@ def _validate_and_load(content: bytes) -> tuple[pd.DataFrame, pd.Series, int]:
     if gene_df.isnull().all().any():
         raise HTTPException(status_code=400, detail="One or more gene columns are entirely non-numeric.")
 
+    # Impute missing cells if any
     gene_df = gene_df.fillna(gene_df.mean())
     phenotype = phenotype.fillna(phenotype.mean())
+
+    # Variance validation: constant columns cause singular matrices and NaN correlations
+    zero_var_genes = [g for g in EXPECTED_GENES if float(gene_df[g].std(ddof=0)) == 0.0]
+    if zero_var_genes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Zero-variance detected in gene column(s): {zero_var_genes}. All genes must have variance.",
+        )
+
+    if float(phenotype.std(ddof=0)) == 0.0:
+        raise HTTPException(
+            status_code=400,
+            detail="Zero-variance detected in phenotype column. Phenotype values must vary across samples.",
+        )
 
     return gene_df, phenotype, len(df)
 
@@ -138,7 +185,7 @@ async def health() -> dict[str, str]:
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
     """
-    Accept a pharmacogenomic CSV, run the simulated attention pipeline,
+    Accept a pharmacogenomic CSV, run the epistasis regression pipeline,
     and return an epistasis interaction matrix plus top pair scores.
     """
     if not file.filename.endswith(".csv"):
