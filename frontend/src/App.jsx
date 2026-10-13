@@ -197,8 +197,8 @@ SAMPLE_001,0.72,0.45,0.38,0.91,...`}
       <footer className="border-t border-indigo-900/30 bg-slate-950/60 py-4 px-6 text-center text-xs text-slate-600">
         <span className="inline-flex items-center gap-1.5">
           <AlertTriangle size={11} className="text-amber-600" />
-          <strong className="text-slate-500">Demo:</strong> ML scores are simulated attention weights, not clinically validated.
-          Architecture is ready for a real trained model to be dropped in. · EpiNet Visualizer v1.0 · MIT
+          <strong className="text-slate-500">Demo:</strong> Classical pairwise interaction regression (ΔR²) on synthetic data.
+          Architecture is ready for a trained attention/transformer model to be dropped in. · EpiNet Visualizer v1.0 · MIT
         </span>
       </footer>
     </div>

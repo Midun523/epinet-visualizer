@@ -17,15 +17,11 @@ info "Checking prerequisites…"
 command -v java  >/dev/null 2>&1 || error "java not found. Install JDK 17+."
 command -v node  >/dev/null 2>&1 || error "node not found. Install Node 20+."
 
-# Python: check functional python or common locations
+# Python: check functional python or py launcher
 if command -v python3 >/dev/null 2>&1 && python3 --version >/dev/null 2>&1; then
   PYTHON="python3"
 elif command -v python >/dev/null 2>&1 && python --version >/dev/null 2>&1; then
   PYTHON="python"
-elif [ -f "/c/Python312/python.exe" ]; then
-  PYTHON="/c/Python312/python.exe"
-elif [ -f "C:/Python312/python.exe" ]; then
-  PYTHON="C:/Python312/python.exe"
 elif command -v py >/dev/null 2>&1; then
   PYTHON="py -3"
 else
@@ -36,18 +32,20 @@ JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}')
 NODE_VER=$(node --version)
 info "Java: $JAVA_VER | Node: $NODE_VER | Python: $($PYTHON --version)"
 
-# Maven: prefer system mvn, fall back to wrapper or tools directory (using absolute paths)
+# Maven: prefer system mvn, fall back to wrapper or MAVEN_HOME
 if command -v mvn >/dev/null 2>&1; then
   MVN="mvn"
+elif [ -n "${MAVEN_HOME:-}" ] && [ -f "$MAVEN_HOME/bin/mvn" ]; then
+  MVN="$MAVEN_HOME/bin/mvn"
+elif [ -n "${M2_HOME:-}" ] && [ -f "$M2_HOME/bin/mvn" ]; then
+  MVN="$M2_HOME/bin/mvn"
 elif [ -f "$ROOT_DIR/backend/mvnw" ]; then
   MVN="$ROOT_DIR/backend/mvnw"
-elif [ -f "/c/tools/apache-maven-3.9.9/bin/mvn.cmd" ]; then
-  MVN="/c/tools/apache-maven-3.9.9/bin/mvn.cmd"
-elif [ -f "C:/tools/apache-maven-3.9.9/bin/mvn.cmd" ]; then
-  MVN="C:/tools/apache-maven-3.9.9/bin/mvn.cmd"
+elif [ -f "$ROOT_DIR/backend/mvnw.cmd" ]; then
+  MVN="$ROOT_DIR/backend/mvnw.cmd"
 else
   warn "mvn not found on PATH. Backend dependency resolution skipped."
-  warn "Install Maven from https://maven.apache.org or run: choco install maven"
+  warn "Install Maven from https://maven.apache.org or set MAVEN_HOME."
   MVN=""
 fi
 

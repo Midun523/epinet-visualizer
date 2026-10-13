@@ -36,10 +36,10 @@ fi
 # ── ML service ─────────────────────────────────────────────────────────────
 info "Starting ML microservice on :8000…"
 cd ml-service
-if [ -f "./venv/Scripts/uvicorn.exe" ] || [ -f "./venv/Scripts/uvicorn" ]; then
-  UVICORN_CMD="./venv/Scripts/uvicorn"
-elif [ -f "./venv/bin/uvicorn" ]; then
+if [ -f "./venv/bin/uvicorn" ]; then
   UVICORN_CMD="./venv/bin/uvicorn"
+elif [ -f "./venv/Scripts/uvicorn" ] || [ -f "./venv/Scripts/uvicorn.exe" ]; then
+  UVICORN_CMD="./venv/Scripts/uvicorn"
 elif command -v uvicorn >/dev/null 2>&1; then
   UVICORN_CMD="uvicorn"
 else
@@ -55,12 +55,14 @@ sleep 2
 info "Starting Spring Boot backend on :8080…"
 if command -v mvn >/dev/null 2>&1; then
   MVN="mvn"
+elif [ -n "${MAVEN_HOME:-}" ] && [ -f "$MAVEN_HOME/bin/mvn" ]; then
+  MVN="$MAVEN_HOME/bin/mvn"
+elif [ -n "${M2_HOME:-}" ] && [ -f "$M2_HOME/bin/mvn" ]; then
+  MVN="$M2_HOME/bin/mvn"
 elif [ -f "$ROOT_DIR/backend/mvnw" ]; then
   MVN="$ROOT_DIR/backend/mvnw"
-elif [ -f "/c/tools/apache-maven-3.9.9/bin/mvn.cmd" ]; then
-  MVN="/c/tools/apache-maven-3.9.9/bin/mvn.cmd"
-elif [ -f "C:/tools/apache-maven-3.9.9/bin/mvn.cmd" ]; then
-  MVN="C:/tools/apache-maven-3.9.9/bin/mvn.cmd"
+elif [ -f "$ROOT_DIR/backend/mvnw.cmd" ]; then
+  MVN="$ROOT_DIR/backend/mvnw.cmd"
 else
   MVN="mvn"
 fi
