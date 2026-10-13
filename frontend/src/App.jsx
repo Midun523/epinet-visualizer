@@ -23,30 +23,20 @@ const RESULT_TABS = [
 export default function App() {
   const [tab, setTab] = useState('upload');
   const [resultTab, setResultTab] = useState('graph');
-  const { phase, result, errorMsg, filename, startUpload, reset } = useAnalysis();
+  const { phase, result, errorMsg, filename, startUpload, loadResult, reset } = useAnalysis();
 
   // Load a past result from the history page
   const loadHistoricResult = async (analysisId) => {
     try {
       const data = await getResult(analysisId);
-      // Inject result directly — reuse the result panel
-      reset();
-      // Small trick: set tab to results and manually override result via a ref-free approach
+      loadResult(data, `Analysis ${analysisId.slice(0, 8)}`, analysisId);
       setTab('results');
-      // The result comes from API but we can't set it directly without exposing setter.
-      // Instead trigger a file-less load by calling the history view callback with data.
-      _setExternalResult(data);
     } catch (e) {
-      console.error(e);
+      console.error('Failed to load historical result:', e);
     }
   };
 
-  // Escape hatch: store externally loaded result separately
-  const [externalResult, _setExternalResult] = useState(null);
-  const activeResult = result || externalResult;
-
   const handleFile = async (file) => {
-    _setExternalResult(null);
     setTab('results');
     await startUpload(file);
   };
@@ -82,7 +72,7 @@ export default function App() {
                 >
                   <Icon size={15} />
                   {t.label}
-                  {t.id === 'results' && activeResult && (
+                  {t.id === 'results' && result && (
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                   )}
                 </button>
@@ -91,9 +81,10 @@ export default function App() {
           </nav>
 
           <a
-            href="https://github.com"
+            href="https://github.com/Midun523/epinet-visualizer"
             target="_blank"
             rel="noopener noreferrer"
+            title="View EpiNet Visualizer source code on GitHub"
             className="text-slate-500 hover:text-slate-300 transition-colors"
           >
             <Github size={20} />
@@ -140,16 +131,16 @@ SAMPLE_001,0.72,0.45,0.38,0.91,...`}
             <StatusBar phase={phase} filename={filename} errorMsg={errorMsg} onReset={() => { reset(); setTab('upload'); }} />
 
             {/* Result content */}
-            {activeResult && (
+            {result && (
               <div className="space-y-4">
                 {/* Meta pills */}
                 <div className="flex flex-wrap gap-3 items-center">
                   <span className="badge badge-success">✓ Analysis Complete</span>
                   <span className="badge badge-info">
-                    {activeResult.meta?.rows_processed} rows
+                    {result.meta?.rows_processed} rows
                   </span>
                   <span className="badge badge-warning flex items-center gap-1">
-                    <AlertTriangle size={10} /> Simulated · {activeResult.meta?.model}
+                    <AlertTriangle size={10} /> Epistasis Regression · {result.meta?.model}
                   </span>
                 </div>
 
@@ -177,20 +168,20 @@ SAMPLE_001,0.72,0.45,0.38,0.91,...`}
                 {/* Panels */}
                 <div className="glass-card p-5 md:p-6">
                   {resultTab === 'graph' && (
-                    <NetworkGraph genes={activeResult.genes} matrix={activeResult.matrix} />
+                    <NetworkGraph genes={result.genes} matrix={result.matrix} />
                   )}
                   {resultTab === 'table' && (
-                    <PairsTable topPairs={activeResult.top_pairs} />
+                    <PairsTable topPairs={result.top_pairs} />
                   )}
                   {resultTab === 'chart' && (
-                    <ScoreChart topPairs={activeResult.top_pairs} />
+                    <ScoreChart topPairs={result.top_pairs} />
                   )}
                 </div>
               </div>
             )}
 
             {/* Empty / loading state */}
-            {!activeResult && phase === 'idle' && (
+            {!result && phase === 'idle' && (
               <EmptyResults onGoUpload={() => setTab('upload')} />
             )}
           </div>

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { SlidersHorizontal, Info } from 'lucide-react';
 
@@ -39,7 +39,8 @@ export default function NetworkGraph({ genes, matrix }) {
     return () => obs.disconnect();
   }, []);
 
-  const graphData = buildGraph(genes, matrix, threshold);
+  // Memoize graph data to prevent re-simulating the D3 layout on hover or node highlight
+  const graphData = useMemo(() => buildGraph(genes, matrix, threshold), [genes, matrix, threshold]);
 
   const linkColor = useCallback((link) => {
     if (highlightNode && link.source.id !== highlightNode && link.target.id !== highlightNode) {
